@@ -46,8 +46,6 @@ NOTE_NAMES = {
     84: "C6", 86: "D6", 88: "E6", 89: "F6", 91: "G6", 93: "A6", 95: "B6",
 }
 
-OUTPUT_TICKS_PER_BEAT = 4
-
 
 class MidiToMusicBoxGUI:
 
@@ -209,24 +207,24 @@ class MidiToMusicBoxGUI:
                 return
 
             min_tick = min(n[1] for n in all_notes)
+            ms_per_tick = 60000.0 / bpm / mid.ticks_per_beat
 
             notes_output = []
             note_details = []
             for note, start_tick, end_tick, velocity in all_notes:
                 key_index = MIDI_TO_KEY_INDEX[note]
-                adjusted_start = int((start_tick - min_tick) * OUTPUT_TICKS_PER_BEAT / mid.ticks_per_beat)
-                duration = max(1, int((end_tick - start_tick) * OUTPUT_TICKS_PER_BEAT / mid.ticks_per_beat))
+                start_ms = int((start_tick - min_tick) * ms_per_tick)
+                duration_ms = max(100, int((end_tick - start_tick) * ms_per_tick))
                 vol = max(0.3, min(1.0, velocity / 127.0))
-                notes_output.append([key_index, adjusted_start, duration, round(vol, 2)])
-                note_details.append("%s(idx=%d) @tick=%d dur=%d vol=%.1f" % (
-                    NOTE_NAMES.get(note, "?"), key_index, adjusted_start, duration, vol))
+                notes_output.append([key_index, start_ms, duration_ms, round(vol, 2)])
+                note_details.append("%s(idx=%d) @%dms dur=%dms vol=%.1f" % (
+                    NOTE_NAMES.get(note, "?"), key_index, start_ms, duration_ms, vol))
 
             notes_output.sort(key=lambda x: (x[1], x[0]))
 
-            max_end_tick = max(n[1] + n[2] for n in notes_output)
-            duration_seconds = max_end_tick * (60.0 / bpm / OUTPUT_TICKS_PER_BEAT)
+            total_ms = max(n[1] + n[2] for n in notes_output) if notes_output else 0
             self._log_info("输出音符: %d 个" % len(notes_output))
-            self._log_info("总时长: %.1f 秒 (%d ticks)" % (duration_seconds, max_end_tick))
+            self._log_info("总时长: %.1f 秒" % (total_ms / 1000.0))
             self._log_info("")
 
             # 显示前 10 个音符详情
@@ -236,12 +234,11 @@ class MidiToMusicBoxGUI:
             if len(note_details) > 10:
                 self._log_info("  ... 共 %d 个" % len(note_details))
 
-            # 构建结果
+            # 构建结果（v2 毫秒格式）
             song_name = os.path.splitext(os.path.basename(self.midi_path))[0]
             self.result = {
-                "v": 1,
+                "v": 2,
                 "n": song_name,
-                "b": bpm,
                 "t": notes_output,
             }
             self.compact_json = json.dumps(self.result, ensure_ascii=False, separators=(",", ":"))

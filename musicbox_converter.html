@@ -341,9 +341,9 @@ function convertMidi(midi, fileName) {
     let bpm = 120;
     for (const track of midi.track) {
         for (const ev of track.event) {
-            if (ev.type === 255 && ev.metaType === 0x51 && ev.data && ev.data.length === 3) {
-                const us = (ev.data[0] << 16) | (ev.data[1] << 8) | ev.data[2];
-                bpm = Math.round(60000000 / us);
+            if (ev.type === 255 && ev.metaType === 0x51 && ev.data) {
+                // ev.data 是整数（midi-parser-js 已合并成单个值）
+                bpm = Math.round(60000000 / ev.data);
                 break;
             }
         }
@@ -395,28 +395,29 @@ function convertMidi(midi, fileName) {
     }
 
     const minTick = Math.min(...allNotes.map(n => n.start));
+    const msPerTick = 60000 / bpm / ticksPerBeat;
+
     const notes = allNotes.map(n => {
         const keyIdx = MIDI_TO_KEY[n.note];
-        const adjStart = Math.round((n.start - minTick) * OUTPUT_TPB / ticksPerBeat);
-        const dur = Math.max(1, Math.round((n.end - n.start) * OUTPUT_TPB / ticksPerBeat));
+        const startMs = Math.round((n.start - minTick) * msPerTick);
+        const durMs = Math.max(100, Math.round((n.end - n.start) * msPerTick));
         const vol = Math.max(0.3, Math.min(1.0, n.vel / 127));
-        return { keyIdx, start: adjStart, dur, vol: Math.round(vol*100)/100, noteName: NOTE_NAMES[n.note] || '?' };
+        return { keyIdx, startMs, durMs, vol: Math.round(vol*100)/100, noteName: NOTE_NAMES[n.note] || '?' };
     });
-    notes.sort((a, b) => a.start - b.start || a.keyIdx - b.keyIdx);
+    notes.sort((a, b) => a.startMs - b.startMs || a.keyIdx - b.keyIdx);
 
-    const maxEnd = Math.max(...notes.map(n => n.start + n.dur));
-    const durationSec = maxEnd * 60 / bpm / OUTPUT_TPB;
+    const totalMs = notes.length > 0 ? notes[notes.length-1].startMs + notes[notes.length-1].durMs : 0;
     const songName = fileName.replace(/\.midi?$/i, '');
-    const t = notes.map(n => [n.keyIdx, n.start, n.dur, n.vol]);
+    const t = notes.map(n => [n.keyIdx, n.startMs, n.durMs, n.vol]);
 
-    currentResult = { v: 1, n: songName, b: bpm, t };
+    currentResult = { v: 2, n: songName, t };
     currentCompactJson = JSON.stringify(currentResult);
 
     // Display
     displayResult({
-        songName, bpm, noteCount: notes.length,
-        durationSec, skippedBlack, skippedRange,
-        ticksPerBeat, notes, compactJson: currentCompactJson
+        songName, noteCount: notes.length,
+        totalMs, skippedBlack, skippedRange,
+        notes, compactJson: currentCompactJson
     });
 }
 
@@ -425,21 +426,21 @@ function displayResult(data) {
     resultSection.style.display = 'block';
 
     // Info
+    const totalSec = (data.totalMs / 1000).toFixed(1);
     infoGrid.innerHTML = `
         <span class="label">曲名</span><span class="value">${data.songName}</span>
-        <span class="label">BPM</span><span class="value">${data.bpm}</span>
         <span class="label">有效音符</span><span class="value">${data.noteCount} 个</span>
-        <span class="label">总时长</span><span class="value">约 ${data.durationSec.toFixed(1)} 秒</span>
+        <span class="label">总时长</span><span class="value">约 ${totalSec} 秒</span>
         <span class="label">跳过黑键</span><span class="value">${data.skippedBlack} 个</span>
         <span class="label">跳过范围外</span><span class="value">${data.skippedRange} 个</span>
     `;
 
     // Note list
     const count = Math.min(20, data.notes.length);
-    let html = '<div class="note-list"><div class="title">前 ' + count + ' 个音符:</div>';
+    let html = '<div class="note-list"><div class="title">前 ' + count + ' 个音符 (毫秒精度):</div>';
     for (let i = 0; i < count; i++) {
         const n = data.notes[i];
-        html += `${n.noteName}(idx=${n.keyIdx}) @tick=${n.start} dur=${n.dur} vol=${n.vol.toFixed(1)}\n`;
+        html += `${n.noteName}(idx=${n.keyIdx}) @${n.startMs}ms dur=${n.durMs}ms vol=${n.vol.toFixed(1)}\n`;
     }
     if (data.notes.length > 20) html += `... 共 ${data.notes.length} 个`;
     html += '</div>';
@@ -482,24 +483,27 @@ btnParse.addEventListener('click', () => {
     if (!text) { showToast('请先粘贴乐谱 JSON 数据'); return; }
     try {
         const data = JSON.parse(text);
-        if (!data.n || !data.b || !Array.isArray(data.t)) {
-            throw new Error('缺少必要字段 (n, b, t)');
+        if (!data.n || !Array.isArray(data.t)) {
+            throw new Error('缺少必要字段 (n, t)');
         }
+        const noteCount = data.t.length;
+        const lastNote = noteCount > 0 ? data.t[noteCount-1] : [0,0,0,0];
+        const totalMs = lastNote[1] + lastNote[2];
         importResult.className = 'import-result success';
-        importResult.textContent = `✅ 解析成功！曲名: ${data.n} | BPM: ${data.b} | 音符: ${data.t.length} 个`;
+        importResult.textContent = `✅ 解析成功！曲名: ${data.n} | 格式: v${data.v || 1} | 音符: ${noteCount} 个`;
         importResult.style.display = 'block';
 
         // 填充到转换结果
         currentResult = data;
         currentCompactJson = JSON.stringify(data);
         const notes = data.t.map(t => ({
-            keyIdx: t[0], start: t[1], dur: t[2], vol: t[3] || 1.0, noteName: '?'
+            keyIdx: t[0], startMs: t[1], durMs: t[2], vol: t[3] || 1.0, noteName: '?'
         }));
-        const maxEnd = Math.max(...notes.map(n => n.start + n.dur));
+        notes.sort((a, b) => a.startMs - b.startMs);
         displayResult({
-            songName: data.n, bpm: data.b, noteCount: data.t.length,
-            durationSec: maxEnd * 60 / data.b / OUTPUT_TPB,
-            skippedBlack: 0, skippedRange: 0, ticksPerBeat: 480, notes, compactJson: currentCompactJson
+            songName: data.n, noteCount,
+            totalMs, skippedBlack: 0, skippedRange: 0, notes,
+            compactJson: currentCompactJson
         });
     } catch(e) {
         importResult.className = 'import-result error';
