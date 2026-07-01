@@ -339,7 +339,7 @@ function parseMidi(arrayBuffer, fileName) {
 function convertMidi(midi, fileName) {
     // BPM
     let bpm = 120;
-    for (const track of midi.tracks) {
+    for (const track of midi.track) {
         for (const ev of track.event) {
             if (ev.subtype === 0x51 && ev.data && ev.data.length === 3) {
                 const us = (ev.data[0] << 16) | (ev.data[1] << 8) | ev.data[2];
@@ -348,14 +348,14 @@ function convertMidi(midi, fileName) {
             }
         }
     }
-    const ticksPerBeat = midi.header.ticksPerBeat || 480;
+    const ticksPerBeat = typeof midi.timeDivision === 'number' ? midi.timeDivision : 480;
 
     // Collect note events
     const ongoing = {};
     const noteEvents = {};
     let totalMsgs = 0, skippedBlack = 0, skippedRange = 0;
 
-    for (const track of midi.tracks) {
+    for (const track of midi.track) {
         let absTick = 0;
         for (const ev of track.event) {
             absTick += ev.deltaTime || 0;
