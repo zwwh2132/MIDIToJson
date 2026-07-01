@@ -4,7 +4,16 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MIDI 转八音盒乐谱工具</title>
-<script src="https://cdn.jsdelivr.net/npm/midi-parser-js@3.0.1/src/midi-parser.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/midi-parser-js@3.0.1/src/midi-parser.min.js"
+        onerror="document.getElementById('debugInfo').textContent='❌ 加载 midi-parser 库失败！请检查网络或刷新重试。'"></script>
+<script>
+// 全局错误捕获
+window.onerror = function(msg, url, line, col, err) {
+    var el = document.getElementById('debugInfo');
+    if (el) el.textContent += '\n❌ ' + msg + ' (行' + line + ')';
+    return false;
+};
+</script>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -217,8 +226,17 @@ textarea:focus { border-color: #8b6b4a; }
     </div>
 </div>
 
-<div class="toast" id="toast"></div>
+<!-- Debug -->
+<div id="debugInfo" style="display:none;max-width:860px;margin:0 auto 16px;padding:12px 16px;background:#fce4ec;color:#c62828;border-radius:8px;font-size:13px;font-family:monospace;white-space:pre-wrap;"></div>
 
+<div class="toast" id="toast"></div>
+<script>
+// debug 控制: 双击标题显示错误面板
+document.querySelector('header h1').ondblclick = function() {
+    var d = document.getElementById('debugInfo');
+    d.style.display = d.style.display === 'none' ? 'block' : 'none';
+};
+</script>
 <script>
 // ======================== 音符映射 ========================
 const MIDI_TO_KEY = {
@@ -253,6 +271,13 @@ const guideContent = document.getElementById('guideContent');
 
 let currentResult = null;
 let currentCompactJson = '';
+
+// Debug log
+function debugLog(msg) {
+    console.log(msg);
+    var el = document.getElementById('debugInfo');
+    if (el && el.style.display !== 'none') el.textContent += '\n' + msg;
+}
 
 // ======================== Toast ========================
 function showToast(msg) {
