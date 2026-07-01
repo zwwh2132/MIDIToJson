@@ -341,7 +341,7 @@ function convertMidi(midi, fileName) {
     let bpm = 120;
     for (const track of midi.track) {
         for (const ev of track.event) {
-            if (ev.subtype === 0x51 && ev.data && ev.data.length === 3) {
+            if (ev.type === 255 && ev.metaType === 0x51 && ev.data && ev.data.length === 3) {
                 const us = (ev.data[0] << 16) | (ev.data[1] << 8) | ev.data[2];
                 bpm = Math.round(60000000 / us);
                 break;
@@ -363,11 +363,11 @@ function convertMidi(midi, fileName) {
             const note = ev.data && ev.data[0];
             const vel = ev.data && ev.data[1];
 
-            if (ev.subtype === 0x90 && vel > 0) {
+            if (ev.type === 9 && vel > 0) {
                 if (!WHITE_NOTES.has(note)) { skippedBlack++; continue; }
                 if (note < 60 || note > 95) { skippedRange++; continue; }
                 ongoing[note] = { start: absTick, vel };
-            } else if (ev.subtype === 0x80 || (ev.subtype === 0x90 && vel === 0)) {
+            } else if (ev.type === 8 || (ev.type === 9 && vel === 0)) {
                 if (ongoing[note]) {
                     const { start, vel } = ongoing[note];
                     delete ongoing[note];
