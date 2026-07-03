@@ -28,33 +28,57 @@ except ImportError:
 
 # MIDI 音符 → keyIndex 映射表 （仅白键）
 # piano config.py 中的 KEY_NOTES:
-#   C6(84)→0  D6(86)→1  E6(88)→2  F6(89)→3  G6(91)→4  A6(93)→5  B6(95)→6
-#   C5(72)→7  D5(74)→8  E5(76)→9  F5(77)→10 G5(79)→11 A5(81)→12 B5(83)→13
-#   C4(60)→14 D4(62)→15 E4(64)→16 F4(65)→17 G4(67)→18 A4(69)→19 B4(71)→20
+#   C5(72)→0  D5(74)→1  E5(76)→2  F5(77)→3  G5(79)→4  A5(81)→5  B5(83)→6
+#   C4(60)→7  D4(62)→8  E4(64)→9  F4(65)→10 G4(67)→11 A4(69)→12 B4(71)→13
+#   C3(48)→14 D3(50)→15 E3(52)→16 F3(53)→17 G3(55)→18 A3(57)→19 B3(59)→20
 MIDI_TO_KEY_INDEX = {
-    60: 14, 62: 15, 64: 16, 65: 17, 67: 18, 69: 19, 71: 20,
-    72: 7,  74: 8,  76: 9,  77: 10, 79: 11, 81: 12, 83: 13,
-    84: 0,  86: 1,  88: 2,  89: 3,  91: 4,  93: 5,  95: 6,
+    48: 14, 50: 15, 52: 16, 53: 17, 55: 18, 57: 19, 59: 20,
+    60: 7,  62: 8,  64: 9,  65: 10, 67: 11, 69: 12, 71: 13,
+    72: 0,  74: 1,  76: 2,  77: 3,  79: 4,  81: 5,  83: 6,
 }
 
 # 白键 MIDI 音符集合（用于判断）
-WHITE_NOTES = {60, 62, 64, 65, 67, 69, 71, 72, 74, 76, 77, 79, 81, 83, 84, 86, 88, 89, 91, 93, 95}
+WHITE_NOTES = {48, 50, 52, 53, 55, 57, 59, 60, 62, 64, 65, 67, 69, 71, 72, 74, 76, 77, 79, 81, 83}
 
 # 音符名映射（仅用于调试输出）
 NOTE_NAMES = {
+    48: "C3", 50: "D3", 52: "E3", 53: "F3", 55: "G3", 57: "A3", 59: "B3",
     60: "C4", 62: "D4", 64: "E4", 65: "F4", 67: "G4", 69: "A4", 71: "B4",
     72: "C5", 74: "D5", 76: "E5", 77: "F5", 79: "G5", 81: "A5", 83: "B5",
-    84: "C6", 86: "D6", 88: "E6", 89: "F6", 91: "G6", 93: "A6", 95: "B6",
 }
 
+# 游戏引擎写入字符串上限（0x7fff = 32767）
+# 留一些余量，超过此值导入会崩溃
+MAX_JSON_SIZE = 30000
 
-def midi_to_musicbox(midi_path, song_name=None, ticks_per_beat=480):
+
+def check_json_size(json_str, label=""):
+    """检查 JSON 字符串大小，超限则打印警告"""
+    size = len(json_str.encode('utf-8'))
+    if size > MAX_JSON_SIZE:
+        print("\n⚠️  WARNING: %sJSON 数据过大 (%d 字节)!" % (label, size))
+        print("   游戏引擎最多支持 %d 字节，当前已超出限制。" % MAX_JSON_SIZE)
+        print("   导入游戏会崩溃 (Assertion failure: string too long)")
+        print("   建议:")
+        print("     - 使用 --compact 紧凑模式减小体积")
+        print("     - 缩短 MIDI 文件（只保留需要的段落）")
+        print("     - 在 MidiNoteConnector 中过滤短音符、连接同音音符以减少数量")
+        print("     - 将乐曲拆分为多个乐谱分别导入")
+    elif size > 25000:
+        print("\n⚠️  提示: JSON 数据较大 (%d 字节)，接近 %d 字节上限" % (size, MAX_JSON_SIZE))
+    else:
+        print("\n✓ JSON 数据大小: %d 字节 (上限 %d)" % (size, MAX_JSON_SIZE))
+    return size
+
+
+def midi_to_musicbox(midi_path, song_name=None, ticks_per_beat=480, compact=False):
     """将 MIDI 文件转换为八音盒乐谱数据
     
     Args:
         midi_path: MIDI 文件路径
         song_name: 曲名（不指定则用文件名）
         ticks_per_beat: 一拍多少 tick（输出格式中用 1 tick = 1/4 拍）
+        compact: 紧凑模式（节省空间，volume 只保留 1 位小数）
     
     Returns:
         dict: 乐谱 JSON 数据
@@ -97,7 +121,7 @@ def midi_to_musicbox(midi_path, song_name=None, ticks_per_beat=480):
                 if note not in WHITE_NOTES:
                     skipped_black += 1
                     continue
-                if note < 60 or note > 95:
+                if note < 48 or note > 83:
                     skipped_range += 1
                     continue
                 ongoing[note] = (abs_tick, msg.velocity)
@@ -150,8 +174,10 @@ def midi_to_musicbox(midi_path, song_name=None, ticks_per_beat=480):
         
         # 音量映射 velocity 0-127 → 0.3-1.0
         vol = max(0.3, min(1.0, velocity / 127.0))
+        if compact:
+            vol = round(vol, 1)  # 1位小数节省空间
         
-        notes_output.append([key_index, adjusted_start, duration, round(vol, 2)])
+        notes_output.append([key_index, adjusted_start, duration, round(vol, 2) if not compact else vol])
     
     # 按 start_tick 排序
     notes_output.sort(key=lambda x: (x[1], x[0]))
@@ -195,22 +221,20 @@ def try_set_clipboard(text):
 
 
 def main():
-    if len(sys.argv) < 2:
-        print(__doc__)
-        sys.exit(1)
-    
-    midi_path = sys.argv[1]
+    import argparse
+    parser = argparse.ArgumentParser(description="MIDI → 八音盒乐谱 JSON 转换工具")
+    parser.add_argument("input", help="输入 MIDI 文件路径")
+    parser.add_argument("output", nargs="?", help="输出 JSON 文件路径（可选）")
+    parser.add_argument("--compact", action="store_true",
+                        help="紧凑模式：volume 只保留 1 位小数，节省 JSON 空间")
+    args = parser.parse_args()
+
+    midi_path = args.input
     if not os.path.exists(midi_path):
         print("文件不存在: %s" % midi_path)
         sys.exit(1)
-    
-    song_name = None
-    if len(sys.argv) >= 3:
-        output_path = sys.argv[2]
-    else:
-        output_path = None
-    
-    result = midi_to_musicbox(midi_path, song_name)
+
+    result = midi_to_musicbox(midi_path, compact=args.compact)
     
     if result is None:
         sys.exit(1)
@@ -228,14 +252,20 @@ def main():
     print("=" * 50)
     print(json_str)
     
+    # 检查 JSON 大小
+    check_json_size(json_str)
+    
+    print()
+    
     # 尝试复制到剪贴板
     if try_set_clipboard(json_str):
-        print("\n✓ 已复制紧凑格式 JSON 到剪贴板！")
+        print("✓ 已复制紧凑格式 JSON 到剪贴板！")
         print("  进入游戏，手持空白乐谱右键八音盒，点击「导入乐谱」即可。")
     else:
-        print("\n! 请手动复制上面的紧凑格式 JSON 到剪贴板。")
+        print("! 请手动复制上面的紧凑格式 JSON 到剪贴板。")
     
     # 写入文件
+    output_path = args.output
     if output_path:
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(result, f, ensure_ascii=False, indent=2, sort_keys=False)

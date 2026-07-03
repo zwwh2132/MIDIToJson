@@ -148,6 +148,7 @@ textarea:focus { border-color: #8b6b4a; }
     .btn-row { flex-direction: column; }
     .info-grid { grid-template-columns: 1fr; }
     .info-grid .value { text-align: left; }
+    #__tmp_options_grid { grid-template-columns: 1fr 1fr !important; }
 }
 
 /* Toast */
@@ -177,6 +178,38 @@ textarea:focus { border-color: #8b6b4a; }
             <div class="text"><strong>点击选择</strong> 或拖拽 MIDI 文件到此处</div>
         </div>
         <div class="file-info" id="fileInfo"></div>
+        <div class="btn-row" style="margin-top:12px;">
+            <button class="btn btn-primary" id="btnConvert" disabled>▶ 解析 MIDI</button>
+        </div>
+    </div>
+
+    <!-- Options -->
+    <div class="card">
+        <div class="card-title">🎛️ 转换选项</div>
+        <div id="__tmp_options_grid" style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;align-items:start;">
+            <div>
+                <label style="display:block;font-size:13px;color:#5c3d2e;margin-bottom:4px;">最低音</label>
+                <input type="number" id="minNote" value="48" min="0" max="127" style="width:100%;padding:8px;border:2px solid #d4c5a9;border-radius:6px;font-size:14px;outline:none;box-sizing:border-box;">
+                <span id="minNoteName" style="font-size:12px;color:#8a7a6a;">C3</span>
+            </div>
+            <div>
+                <label style="display:block;font-size:13px;color:#5c3d2e;margin-bottom:4px;">最高音</label>
+                <input type="number" id="maxNote" value="83" min="0" max="127" style="width:100%;padding:8px;border:2px solid #d4c5a9;border-radius:6px;font-size:14px;outline:none;box-sizing:border-box;">
+                <span id="maxNoteName" style="font-size:12px;color:#8a7a6a;">B5</span>
+            </div>
+            <div>
+                <label style="display:flex;align-items:center;gap:6px;font-size:14px;color:#5c3d2e;cursor:pointer;">
+                    <input type="checkbox" id="enableTranspose" checked> 移调超出音符
+                </label>
+                <p style="font-size:12px;color:#8a7a6a;margin:4px 0 0;">将超出范围的音符移调±12半音至范围内</p>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;padding-top:6px;">
+                <label style="display:flex;align-items:center;gap:6px;font-size:14px;color:#5c3d2e;cursor:pointer;">
+                    <input type="checkbox" id="enableCompact"> 紧凑模式
+                </label>
+                <span style="font-size:12px;color:#8a7a6a;">volume 1位小数，节省JSON空间</span>
+            </div>
+        </div>
     </div>
 
     <!-- Result -->
@@ -238,19 +271,29 @@ document.querySelector('header h1').ondblclick = function() {
 };
 </script>
 <script>
-// ======================== 音符映射 ========================
-const MIDI_TO_KEY = {
-    60:14,62:15,64:16,65:17,67:18,69:19,71:20,
-    72:7,74:8,76:9,77:10,79:11,81:12,83:13,
-    84:0,86:1,88:2,89:3,91:4,93:5,95:6
-};
-const WHITE_NOTES = new Set(Object.keys(MIDI_TO_KEY).map(Number));
+// ======================== 音符映射 (36音半音阶) ========================
+// MIDI note → 半音阶索引 (0-35, 对应 core.pitches.CHROMATIC_PITCHES)
+// idx  0-11: C5→B5 (MIDI 72-83)
+// idx 12-23: C4→B4 (MIDI 60-71)
+// idx 24-35: C3→B3 (MIDI 48-59)
+function midiToChromatic(midiNote) {
+    if (midiNote >= 72) return midiNote - 72;    // C5-B5
+    if (midiNote >= 60) return midiNote - 48;    // C4-B4
+    if (midiNote >= 48) return midiNote - 24;    // C3-B3
+    return -1;
+}
 const NOTE_NAMES = {
-    60:"C4",62:"D4",64:"E4",65:"F4",67:"G4",69:"A4",71:"B4",
-    72:"C5",74:"D5",76:"E5",77:"F5",79:"G5",81:"A5",83:"B5",
-    84:"C6",86:"D6",88:"E6",89:"F6",91:"G6",93:"A6",95:"B6"
+    48:"C3",49:"C#3",50:"D3",51:"D#3",52:"E3",53:"F3",54:"F#3",55:"G3",56:"G#3",57:"A3",58:"A#3",59:"B3",
+    60:"C4",61:"C#4",62:"D4",63:"D#4",64:"E4",65:"F4",66:"F#4",67:"G4",68:"G#4",69:"A4",70:"A#4",71:"B4",
+    72:"C5",73:"C#5",74:"D5",75:"D#5",76:"E5",77:"F5",78:"F#5",79:"G5",80:"G#5",81:"A5",82:"A#5",83:"B5",
 };
 const OUTPUT_TPB = 4;
+
+// MIDI note → 音名
+function midiNoteName(n) {
+    const names = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+    return names[n % 12] + ((n / 12 | 0) - 1);
+}
 
 // ======================== DOM 引用 ========================
 const fileInput = document.getElementById('fileInput');
@@ -265,12 +308,28 @@ const btnDownload = document.getElementById('btnDownload');
 const importText = document.getElementById('importText');
 const btnParse = document.getElementById('btnParse');
 const importResult = document.getElementById('importResult');
+const btnConvert = document.getElementById('btnConvert');
 const toast = document.getElementById('toast');
 const guideToggle = document.getElementById('guideToggle');
 const guideContent = document.getElementById('guideContent');
 
 let currentResult = null;
 let currentCompactJson = '';
+
+// 待解析的文件数据（先选文件，再点解析）
+let _pendingFileData = { arrayBuffer: null, fileName: '' };
+
+// 最低/最高音输入 → 实时显示音名
+const minNoteInput = document.getElementById('minNote');
+const maxNoteInput = document.getElementById('maxNote');
+const minNoteName = document.getElementById('minNoteName');
+const maxNoteName = document.getElementById('maxNoteName');
+minNoteInput.addEventListener('input', function() {
+    minNoteName.textContent = midiNoteName(parseInt(this.value) || 48);
+});
+maxNoteInput.addEventListener('input', function() {
+    maxNoteName.textContent = midiNoteName(parseInt(this.value) || 83);
+});
 
 // Debug log
 function debugLog(msg) {
@@ -321,28 +380,59 @@ function handleFile(file) {
     fileInfo.style.display = 'block';
     fileInfo.textContent = '🎵 ' + file.name + ' (' + size + ')';
 
+    // 只加载数据，不自动解析，等待用户点击「解析 MIDI」
     const reader = new FileReader();
-    reader.onload = e => parseMidi(e.target.result, file.name);
+    reader.onload = e => {
+        _pendingFileData = { arrayBuffer: e.target.result, fileName: file.name };
+        btnConvert.disabled = false;
+        btnConvert.textContent = '▶ 解析 MIDI: ' + file.name;
+        // 自动滚动到按钮
+        btnConvert.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    };
     reader.readAsArrayBuffer(file);
 }
 
-// ======================== MIDI Parse ========================
-function parseMidi(arrayBuffer, fileName) {
-    try {
-        const midi = MIDIParser.parse(new Uint8Array(arrayBuffer));
-        convertMidi(midi, fileName);
-    } catch(err) {
-        showToast('MIDI 解析失败: ' + err.message);
-    }
-}
+// 点击「解析 MIDI」按钮
+btnConvert.addEventListener('click', () => {
+    if (!_pendingFileData.arrayBuffer) return;
+    btnConvert.disabled = true;
+    btnConvert.textContent = '⏳ 解析中...';
+    // 延迟一帧让 UI 刷新
+    setTimeout(() => {
+        try {
+            const midi = MIDIParser.parse(new Uint8Array(_pendingFileData.arrayBuffer));
+            convertMidi(midi, _pendingFileData.fileName);
+        } catch(err) {
+            showToast('MIDI 解析失败: ' + err.message);
+        }
+        btnConvert.disabled = false;
+        btnConvert.textContent = '▶ 解析 MIDI: ' + _pendingFileData.fileName;
+    }, 50);
+});
 
+// ======================== MIDI Parse ========================
 function convertMidi(midi, fileName) {
+    // 读取转换选项
+    const minNote = parseInt(document.getElementById('minNote').value) || 48;
+    const maxNote = parseInt(document.getElementById('maxNote').value) || 83;
+    const enableTranspose = document.getElementById('enableTranspose').checked;
+    const enableCompact = document.getElementById('enableCompact').checked;
+
+    // 游戏引擎字符串上限
+    const MAX_JSON_SIZE = 30000;
+
+    // 移调辅助：±12 半音将音符推入范围
+    function clampNote(n) {
+        while (n < minNote && n + 12 <= maxNote) n += 12;
+        while (n > maxNote && n - 12 >= minNote) n -= 12;
+        return n;
+    }
+
     // BPM
     let bpm = 120;
     for (const track of midi.track) {
         for (const ev of track.event) {
             if (ev.type === 255 && ev.metaType === 0x51 && ev.data) {
-                // ev.data 是整数（midi-parser-js 已合并成单个值）
                 bpm = Math.round(60000000 / ev.data);
                 break;
             }
@@ -353,21 +443,28 @@ function convertMidi(midi, fileName) {
     // Collect note events
     const ongoing = {};
     const noteEvents = {};
-    let totalMsgs = 0, skippedBlack = 0, skippedRange = 0;
+    let totalMsgs = 0, skippedRange = 0, transposed = 0;
 
     for (const track of midi.track) {
         let absTick = 0;
         for (const ev of track.event) {
             absTick += ev.deltaTime || 0;
             totalMsgs++;
-            const note = ev.data && ev.data[0];
+            const rawNote = ev.data && ev.data[0];
             const vel = ev.data && ev.data[1];
 
             if (ev.type === 9 && vel > 0) {
-                if (!WHITE_NOTES.has(note)) { skippedBlack++; continue; }
-                if (note < 60 || note > 95) { skippedRange++; continue; }
+                let note = rawNote;
+                if (enableTranspose) {
+                    const before = note;
+                    note = clampNote(note);
+                    if (note !== before && note >= minNote && note <= maxNote) transposed++;
+                }
+                if (note < minNote || note > maxNote) { skippedRange++; continue; }
                 ongoing[note] = { start: absTick, vel };
             } else if (ev.type === 8 || (ev.type === 9 && vel === 0)) {
+                let note = rawNote;
+                if (enableTranspose) note = clampNote(note);
                 if (ongoing[note]) {
                     const { start, vel } = ongoing[note];
                     delete ongoing[note];
@@ -390,7 +487,7 @@ function convertMidi(midi, fileName) {
     }
 
     if (allNotes.length === 0) {
-        showToast('没有找到可转换的音符 (需要 C4~B6 的白键)');
+        showToast('没有找到可转换的音符 (当前范围: ' + minNote + '~' + maxNote + ')');
         return;
     }
 
@@ -398,26 +495,32 @@ function convertMidi(midi, fileName) {
     const msPerTick = 60000 / bpm / ticksPerBeat;
 
     const notes = allNotes.map(n => {
-        const keyIdx = MIDI_TO_KEY[n.note];
+        const keyIdx = midiToChromatic(n.note);
+        if (keyIdx < 0) return null;
         const startMs = Math.round((n.start - minTick) * msPerTick);
         const durMs = Math.max(100, Math.round((n.end - n.start) * msPerTick));
         const vol = Math.max(0.3, Math.min(1.0, n.vel / 127));
-        return { keyIdx, startMs, durMs, vol: Math.round(vol*100)/100, noteName: NOTE_NAMES[n.note] || '?' };
-    });
+        const roundedVol = enableCompact ? Math.round(vol * 10) / 10 : Math.round(vol * 100) / 100;
+        return { keyIdx, startMs, durMs, vol: roundedVol, noteName: NOTE_NAMES[n.note] || '?' };
+    }).filter(n => n !== null);
     notes.sort((a, b) => a.startMs - b.startMs || a.keyIdx - b.keyIdx);
 
     const totalMs = notes.length > 0 ? notes[notes.length-1].startMs + notes[notes.length-1].durMs : 0;
     const songName = fileName.replace(/\.midi?$/i, '');
     const t = notes.map(n => [n.keyIdx, n.startMs, n.durMs, n.vol]);
 
-    currentResult = { v: 2, n: songName, t };
+    currentResult = { v: 3, n: songName, t };
     currentCompactJson = JSON.stringify(currentResult);
+
+    // 检查 JSON 大小
+    const jsonBytes = new Blob([currentCompactJson]).size;
 
     // Display
     displayResult({
         songName, noteCount: notes.length,
-        totalMs, skippedBlack, skippedRange,
-        notes, compactJson: currentCompactJson
+        totalMs, skippedRange, transposed,
+        notes, compactJson: currentCompactJson,
+        jsonBytes, maxJsonSize: MAX_JSON_SIZE
     });
 }
 
@@ -425,14 +528,32 @@ function convertMidi(midi, fileName) {
 function displayResult(data) {
     resultSection.style.display = 'block';
 
+    // JSON 大小信息
+    let sizeHtml = '';
+    if (data.jsonBytes !== undefined) {
+        const pct = (data.jsonBytes / data.maxJsonSize * 100).toFixed(0);
+        if (data.jsonBytes > data.maxJsonSize) {
+            sizeHtml = `<span class="label" style="color:#c62828;">⚠️ JSON 大小</span>
+                <span class="value" style="color:#c62828;">${data.jsonBytes} 字节 (超限! 导入会崩溃)</span>`;
+        } else if (data.jsonBytes > 25000) {
+            sizeHtml = `<span class="label" style="color:#e65100;">⚠️ JSON 大小</span>
+                <span class="value" style="color:#e65100;">${data.jsonBytes} 字节 (接近上限, 建议勾选紧凑模式)</span>`;
+        } else {
+            sizeHtml = `<span class="label">JSON 大小</span><span class="value">${data.jsonBytes} 字节 (上限 ${data.maxJsonSize})</span>`;
+        }
+    }
+
     // Info
     const totalSec = (data.totalMs / 1000).toFixed(1);
+    const transposedLine = data.transposed ? `<span class="label">已移调</span><span class="value">${data.transposed} 个</span>` : '';
     infoGrid.innerHTML = `
         <span class="label">曲名</span><span class="value">${data.songName}</span>
         <span class="label">有效音符</span><span class="value">${data.noteCount} 个</span>
         <span class="label">总时长</span><span class="value">约 ${totalSec} 秒</span>
-        <span class="label">跳过黑键</span><span class="value">${data.skippedBlack} 个</span>
+        <span class="label">格式版本</span><span class="value">v3 (36音半音阶)</span>
         <span class="label">跳过范围外</span><span class="value">${data.skippedRange} 个</span>
+        ${transposedLine}
+        ${sizeHtml}
     `;
 
     // Note list
@@ -490,20 +611,31 @@ btnParse.addEventListener('click', () => {
         const lastNote = noteCount > 0 ? data.t[noteCount-1] : [0,0,0,0];
         const totalMs = lastNote[1] + lastNote[2];
         importResult.className = 'import-result success';
-        importResult.textContent = `✅ 解析成功！曲名: ${data.n} | 格式: v${data.v || 1} | 音符: ${noteCount} 个`;
+        importResult.textContent = `✅ 解析成功！曲名: ${data.n} | 格式: v${data.v || 1} | 音符: ${noteCount} 个${sizeStatus}`;
         importResult.style.display = 'block';
 
         // 填充到转换结果
         currentResult = data;
         currentCompactJson = JSON.stringify(data);
+        const jsonBytes = new Blob([currentCompactJson]).size;
+        const maxSize = 30000;
+
+        let sizeStatus = '';
+        if (jsonBytes > maxSize) {
+            sizeStatus = ` ⚠️ 数据过大(${jsonBytes}字节/上限${maxSize})`;
+        } else if (jsonBytes > 25000) {
+            sizeStatus = ` ⚠️ 接近上限(${jsonBytes}字节/上限${maxSize})`;
+        }
+
         const notes = data.t.map(t => ({
             keyIdx: t[0], startMs: t[1], durMs: t[2], vol: t[3] || 1.0, noteName: '?'
         }));
         notes.sort((a, b) => a.startMs - b.startMs);
         displayResult({
             songName: data.n, noteCount,
-            totalMs, skippedBlack: 0, skippedRange: 0, notes,
-            compactJson: currentCompactJson
+            totalMs, skippedRange: 0, transposed: 0, notes,
+            compactJson: currentCompactJson,
+            jsonBytes, maxJsonSize: maxSize
         });
     } catch(e) {
         importResult.className = 'import-result error';

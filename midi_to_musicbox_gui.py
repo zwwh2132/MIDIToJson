@@ -32,18 +32,19 @@ except ImportError:
     sys.exit(1)
 
 
+from midi_to_musicbox import check_json_size, MAX_JSON_SIZE
+
 # MIDI 音符 → keyIndex 映射表（仅白键 C4-B6）
 MIDI_TO_KEY_INDEX = {
-    60: 14, 62: 15, 64: 16, 65: 17, 67: 18, 69: 19, 71: 20,
-    72: 7,  74: 8,  76: 9,  77: 10, 79: 11, 81: 12, 83: 13,
-    84: 0,  86: 1,  88: 2,  89: 3,  91: 4,  93: 5,  95: 6,
+    48: 14, 50: 15, 52: 16, 53: 17, 55: 18, 57: 19, 59: 20,
+    60: 7,  62: 8,  64: 9,  65: 10, 67: 11, 69: 12, 71: 13,
+    72: 0,  74: 1,  76: 2,  77: 3,  79: 4,  81: 5,  83: 6,
 }
 WHITE_NOTES = set(MIDI_TO_KEY_INDEX.keys())
-
 NOTE_NAMES = {
+    48: "C3", 50: "D3", 52: "E3", 53: "F3", 55: "G3", 57: "A3", 59: "B3",
     60: "C4", 62: "D4", 64: "E4", 65: "F4", 67: "G4", 69: "A4", 71: "B4",
     72: "C5", 74: "D5", 76: "E5", 77: "F5", 79: "G5", 81: "A5", 83: "B5",
-    84: "C6", 86: "D6", 88: "E6", 89: "F6", 91: "G6", 93: "A6", 95: "B6",
 }
 
 
@@ -95,8 +96,13 @@ class MidiToMusicBoxGUI:
                                    state="disabled")
         self.save_btn.pack(side="left", padx=2)
 
+        self.compact_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(btn_frame, text="紧凑模式",
+                        variable=self.compact_var).pack(side="right", padx=2)
+        ttk.Label(btn_frame, text="volume 1位小数，节省JSON空间").pack(side="right", padx=(0, 5))
+
         self.import_guide_btn = ttk.Button(btn_frame, text="游戏导入说明", command=self._show_guide)
-        self.import_guide_btn.pack(side="right", padx=2)
+        self.import_guide_btn.pack(side="left", padx=2)
 
         # ====== 预览区域 ======
         preview_frame = ttk.LabelFrame(self.window, text="乐谱 JSON 预览", padding=10)
@@ -171,7 +177,7 @@ class MidiToMusicBoxGUI:
                         if note not in WHITE_NOTES:
                             skipped_black += 1
                             continue
-                        if note < 60 or note > 95:
+                        if note < 48 or note > 83:
                             skipped_range += 1
                             continue
                         ongoing[note] = (abs_tick, msg.velocity)
@@ -211,12 +217,15 @@ class MidiToMusicBoxGUI:
 
             notes_output = []
             note_details = []
+            compact = self.compact_var.get()
             for note, start_tick, end_tick, velocity in all_notes:
                 key_index = MIDI_TO_KEY_INDEX[note]
                 start_ms = int((start_tick - min_tick) * ms_per_tick)
                 duration_ms = max(100, int((end_tick - start_tick) * ms_per_tick))
                 vol = max(0.3, min(1.0, velocity / 127.0))
-                notes_output.append([key_index, start_ms, duration_ms, round(vol, 2)])
+                if compact:
+                    vol = round(vol, 1)
+                notes_output.append([key_index, start_ms, duration_ms, round(vol, 2) if not compact else vol])
                 note_details.append("%s(idx=%d) @%dms dur=%dms vol=%.1f" % (
                     NOTE_NAMES.get(note, "?"), key_index, start_ms, duration_ms, vol))
 
@@ -243,6 +252,16 @@ class MidiToMusicBoxGUI:
             }
             self.compact_json = json.dumps(self.result, ensure_ascii=False, separators=(",", ":"))
             pretty_json = json.dumps(self.result, ensure_ascii=False, indent=2, sort_keys=False)
+
+            # 检查 JSON 大小
+            json_size = len(self.compact_json.encode('utf-8'))
+            if json_size > MAX_JSON_SIZE:
+                self._log_info("⚠️  JSON 数据过大 (%d 字节)，超出游戏 %d 字节限制!" % (json_size, MAX_JSON_SIZE))
+                self._log_info("   导入游戏会崩溃！建议勾选「紧凑模式」再试，或缩短乐曲长度。")
+            elif json_size > 25000:
+                self._log_info("⚠️  JSON 数据较大 (%d 字节)，接近 %d 字节上限" % (json_size, MAX_JSON_SIZE))
+            else:
+                self._log_info("✓ JSON 数据大小: %d 字节 (上限 %d)" % (json_size, MAX_JSON_SIZE))
 
             self._set_preview(pretty_json)
             self.copy_btn.config(state="normal")

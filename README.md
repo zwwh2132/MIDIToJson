@@ -10,6 +10,8 @@
 | `midi_to_musicbox_gui.py` | GUI 桌面版 | `pip install mido` + `py -3 midi_to_musicbox_gui.py` |
 | `midi_to_musicbox.py` | 命令行版 | `pip install mido` + `py -3 midi_to_musicbox.py input.mid` |
 | `generate_placeholder_textures.py` | 生成占位贴图 | `py -3 generate_placeholder_textures.py` |
+| `midi_note_connector.py` | MIDI 音符连接器（命令行版） | `py -3 midi_note_connector.py input.mid output.mid` |
+| `midi_note_connector_gui.py` | MIDI 音符连接器（GUI 版） | `py -3 midi_note_connector_gui.py` |
 
 ## 使用方式
 

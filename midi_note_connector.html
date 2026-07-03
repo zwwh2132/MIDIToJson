@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MIDI 音符连接器</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f5efe6; color: #3d2b1a; line-height: 1.6;
+}
+.container { max-width: 860px; margin: 0 auto; padding: 16px; }
+header {
+    text-align: center; padding: 24px 0 16px;
+    border-bottom: 2px solid #d4c5a9; margin-bottom: 20px;
+}
+header h1 { font-size: 22px; color: #5c3d2e; }
+header h1 span { font-size: 26px; }
+header p { font-size: 13px; color: #8a7a6a; margin-top: 4px; }
+.card {
+    background: #fff; border-radius: 12px; padding: 20px;
+    margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+.card-title {
+    font-size: 15px; font-weight: 600; color: #5c3d2e;
+    margin-bottom: 12px; display: flex; align-items: center; gap: 6px;
+}
+.upload-area {
+    border: 2px dashed #d4c5a9; border-radius: 10px;
+    padding: 32px 16px; text-align: center; cursor: pointer;
+    transition: all 0.2s; position: relative;
+}
+.upload-area:hover, .upload-area.dragover {
+    border-color: #c4956a; background: #fdf8f0;
+}
+.upload-area .icon { font-size: 36px; margin-bottom: 8px; }
+.upload-area .text { font-size: 14px; color: #8a7a6a; }
+.upload-area .text strong { color: #5c3d2e; }
+.upload-area input[type=file] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer;
+}
+.file-info {
+    display: none; margin-top: 12px; padding: 10px 14px;
+    background: #f5efe6; border-radius: 8px; font-size: 13px;
+}
+.param-row {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
+    flex-wrap: wrap;
+}
+.param-row label { font-size: 14px; color: #5c3d2e; min-width: 100px; }
+.param-row input[type=number] {
+    width: 80px; padding: 6px 8px; border: 2px solid #d4c5a9;
+    border-radius: 6px; font-size: 14px; outline: none;
+}
+.param-row input[type=number]:focus { border-color: #8b6b4a; }
+.param-row .hint { font-size: 12px; color: #8a7a6a; }
+.param-row input[type=checkbox] { width: 16px; height: 16px; cursor: pointer; }
+.btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 4px; }
+.btn {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 10px 20px; border: none; border-radius: 8px;
+    font-size: 14px; cursor: pointer; transition: all 0.15s;
+    font-family: inherit; font-weight: 500;
+}
+.btn-primary { background: #8b6b4a; color: #fff; }
+.btn-primary:hover { background: #7a5d3f; }
+.btn-primary:disabled { background: #c4b8a8; cursor: not-allowed; }
+.btn-success { background: #5a8f6a; color: #fff; }
+.btn-success:hover { background: #4d7d5c; }
+.btn-success:disabled { background: #a8c4b0; cursor: not-allowed; }
+.sep { border: none; border-top: 1px solid #e8ddd0; margin: 12px 0; }
+.result-section { display: none; }
+.info-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px 20px;
+    font-size: 13px; margin-bottom: 8px;
+}
+.info-grid .label { color: #8a7a6a; }
+.info-grid .value { color: #3d2b1a; font-weight: 500; text-align: right; }
+.detail-list {
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 12px; max-height: 200px; overflow-y: auto;
+    background: #faf8f5; border-radius: 6px; padding: 10px; margin-top: 8px;
+}
+.toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: #3d2b1a; color: #fff; padding: 12px 24px;
+    border-radius: 8px; font-size: 14px; z-index: 999;
+    opacity: 0; transition: opacity 0.3s; pointer-events: none;
+}
+.toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="container">
+    <header>
+        <h1><span>🔗</span> MIDI 音符连接器</h1>
+        <p>自动合并同音首尾相接的音符，生成更自然的连音效果</p>
+    </header>
+
+    <!-- Upload -->
+    <div class="card">
+        <div class="card-title">📂 选择 MIDI 文件</div>
+        <div class="upload-area" id="uploadArea">
+            <input type="file" id="fileInput" accept=".mid,.midi">
+            <div class="icon">🎹</div>
+            <div class="text"><strong>点击选择</strong> 或拖拽 MIDI 文件到此处</div>
+        </div>
+        <div class="file-info" id="fileInfo"></div>
+    </div>
+
+    <!-- Parameters -->
+    <div class="card">
+        <div class="card-title">⚙️ 合并参数</div>
+        <div class="param-row">
+            <label>间隙阈值 (tick)</label>
+            <input type="number" id="gapThreshold" value="0" min="0" max="480" step="1">
+            <span class="hint">前后音符间隔 ≤ 此值时合并，0=仅刚好衔接</span>
+        </div>
+        <div class="param-row">
+            <label></label>
+            <input type="checkbox" id="mergeOverlap" checked>
+            <span style="font-size:14px;color:#5c3d2e;">合并重叠音符</span>
+            <span class="hint">（后一个在前一个结束前开始）</span>
+        </div>
+        <div class="param-row">
+            <label></label>
+            <input type="checkbox" id="anyVelocity">
+            <span style="font-size:14px;color:#5c3d2e;">不要求力度相同</span>
+            <span class="hint">（不同 velocity 也可合并）</span>
+        </div>
+        <hr class="sep">
+        <div class="param-row">
+            <label></label>
+            <input type="checkbox" id="enableFilter">
+            <span style="font-size:14px;color:#5c3d2e;">过滤极短音符</span>
+            <span class="hint">删除时长 &lt;</span>
+            <input type="number" id="minDuration" value="5" min="1" max="480" step="1" disabled>
+            <span class="hint">tick 的杂音音符</span>
+        </div>
+        <div class="btn-row">
+            <button class="btn btn-primary" id="btnProcess" disabled>🔗 分析并处理</button>
+        </div>
+    </div>
+
+    <!-- Result -->
+    <div class="result-section" id="resultSection">
+        <div class="card">
+            <div class="card-title">📊 处理结果</div>
+            <div class="info-grid" id="infoGrid"></div>
+            <div class="detail-list" id="detailList"></div>
+            <div class="btn-row">
+                <button class="btn btn-success" id="btnDownload" disabled>💾 下载处理后的 MIDI</button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+// ===== midi-parser-js (embedded) =====
+"use strict";const _atob=function(e){let t="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";if(e=e.replace(/^.*?base64,/,""),e=String(e).replace(/[\t\n\f\r ]+/g,""),!/^(?:[A-Za-z\d+\/]{4})*?(?:[A-Za-z\d+\/]{2}(?:==)?|[A-Za-z\d+\/]{3}=?)?$/.test(e))throw new TypeError("Failed to execute _atob() : The string to be decoded is not correctly encoded.");e+="==".slice(2-(3&e.length));let r,a,n,i="",s=0;for(;s<e.length;)r=t.indexOf(e.charAt(s++))<<18|t.indexOf(e.charAt(s++))<<12|(a=t.indexOf(e.charAt(s++)))<<6|(n=t.indexOf(e.charAt(s++))),i+=64===a?String.fromCharCode(r>>16&255):64===n?String.fromCharCode(r>>16&255,r>>8&255):String.fromCharCode(r>>16&255,r>>8&255,255&r);return i},MIDIParser={debug:!1,parse:function(e,t){if(e instanceof Uint8Array)return MIDIParser.Uint8(e);var r=null;return"string"==typeof e?r=MIDIParser.Base64(e):"object"==typeof e&&e instanceof HTMLElement&&"file"===e.type?r=MIDIParser.addListener(e,t):e instanceof ArrayBuffer&&(r=MIDIParser.Uint8(new Uint8Array(e))),r},addListener:function(e,t){if(!File||!FileReader)throw new Error("The File|FileReader APIs are not supported in this browser. Use instead MIDIParser.Base64() or MIDIParser.Uint8()");if(void 0===e||!(e instanceof HTMLElement)||"INPUT"!==e.tagName||"file"!==e.type.toLowerCase())return console.warn("MIDIParser.addListener() : Provided element is not a valid FILE INPUT element"),!1;t=t||function(){},e.addEventListener("change",(function(e){if(!e.target.files.length)return!1;console.log("MIDIParser.addListener() : File detected in INPUT ELEMENT processing data..");let r=new FileReader;r.readAsArrayBuffer(e.target.files[0]),r.onload=function(e){t(MIDIParser.Uint8(new Uint8Array(e.target.result)))}}))},Base64:function(e){e=String(e);let t=_atob(e),r=t.length,a=new Uint8Array(new ArrayBuffer(r));for(let e=0;e<r;e++)a[e]=t.charCodeAt(e);return MIDIParser.Uint8(a)},Uint8:function(e){let t={data:null,pointer:0,movePointer:function(e){return this.pointer+=e,this.pointer},readInt:function(e){if((e=Math.min(e,this.data.byteLength-this.pointer))<1)return-1;let t=0;if(e>1)for(let r=1;r<=e-1;r++)t+=this.data.getUint8(this.pointer)*Math.pow(256,e-r),this.pointer++;return t+=this.data.getUint8(this.pointer),this.pointer++,t},readStr:function(e){let t="";for(let r=1;r<=e;r++)t+=String.fromCharCode(this.readInt(1));return t},readIntVLV:function(){let e=0;if(this.pointer>=this.data.byteLength)return-1;if(this.data.getUint8(this.pointer)<128)e=this.readInt(1);else{let t=[];for(;this.data.getUint8(this.pointer)>=128;)t.push(this.readInt(1)-128);let r=this.readInt(1);for(let r=1;r<=t.length;r++)e+=t[t.length-r]*Math.pow(128,r);e+=r}return e}};if(t.data=new DataView(e.buffer,e.byteOffset,e.byteLength),1297377380!==t.readInt(4))return console.warn("Header validation failed (not MIDI standard or file corrupt.)"),!1;t.readInt(4);let r={};r.formatType=t.readInt(2),r.tracks=t.readInt(2),r.track=[];let a=t.readInt(1),n=t.readInt(1);a>=128?(r.timeDivision=[],r.timeDivision[0]=a-128,r.timeDivision[1]=n):r.timeDivision=256*a+n;for(let e=1;e<=r.tracks;e++){r.track[e-1]={event:[]};let a=t.readInt(4);if(-1===a)break;if(1297379947!==a)return!1;t.readInt(4);let n,i=0,s=0,d=!1;for(;!d&&(s++,r.track[e-1].event[s-1]={},r.track[e-1].event[s-1].deltaTime=t.readIntVLV(),n=t.readInt(1),-1!==n);)if(n>=128?i=n:(n=i,t.movePointer(-1)),255===n){r.track[e-1].event[s-1].type=255,r.track[e-1].event[s-1].metaType=t.readInt(1);let a=t.readIntVLV();switch(r.track[e-1].event[s-1].metaType){case 47:case-1:d=!0;break;case 1:case 2:case 3:case 6:r.track[e-1].event[s-1].data=t.readStr(a);break;case 33:case 89:case 81:r.track[e-1].event[s-1].data=t.readInt(a);break;case 84:case 88:r.track[e-1].event[s-1].data=[],r.track[e-1].event[s-1].data[0]=t.readInt(1),r.track[e-1].event[s-1].data[1]=t.readInt(1),r.track[e-1].event[s-1].data[2]=t.readInt(1),r.track[e-1].event[s-1].data[3]=t.readInt(1);break;default:null!==this.customInterpreter&&(r.track[e-1].event[s-1].data=this.customInterpreter(r.track[e-1].event[s-1].metaType,t,a)),null!==this.customInterpreter&&!1!==r.track[e-1].event[s-1].data||(t.readInt(a),r.track[e-1].event[s-1].data=t.readInt(a),this.debug&&console.info("Unimplemented 0xFF meta event! data block readed as Integer"))}}else switch(n=n.toString(16).split(""),n[1]||n.unshift("0"),r.track[e-1].event[s-1].type=parseInt(n[0],16),r.track[e-1].event[s-1].channel=parseInt(n[1],16),r.track[e-1].event[s-1].type){case 15:if(null!==this.customInterpreter&&(r.track[e-1].event[s-1].data=this.customInterpreter(r.track[e-1].event[s-1].type,t,!1)),null===this.customInterpreter||!1===r.track[e-1].event[s-1].data){let a=t.readIntVLV();r.track[e-1].event[s-1].data=t.readInt(a),this.debug&&console.info("Unimplemented 0xF exclusive events! data block readed as Integer")}break;case 10:case 11:case 14:case 8:case 9:r.track[e-1].event[s-1].data=[],r.track[e-1].event[s-1].data[0]=t.readInt(1),r.track[e-1].event[s-1].data[1]=t.readInt(1);break;case 12:case 13:r.track[e-1].event[s-1].data=t.readInt(1);break;case-1:d=!0;break;default:if(null!==this.customInterpreter&&(r.track[e-1].event[s-1].data=this.customInterpreter(r.track[e-1].event[s-1].metaType,t,!1)),null===this.customInterpreter||!1===r.track[e-1].event[s-1].data)return console.log("Unknown EVENT detected... reading cancelled!"),!1}}return r},customInterpreter:null};
+
+// ===== 工具函数 =====
+function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.classList.add('show');
+    clearTimeout(t._timer);
+    t._timer = setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+function noteName(midiNote) {
+    const names = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+    return names[midiNote % 12] + ((midiNote / 12 | 0) - 1);
+}
+
+// ===== 音符提取（同 Python 版 extract_notes） =====
+function extractNotes(midi) {
+    const ongoing = {};  // note -> {start, velocity}
+    const notes = [];
+    const ticksPerBeat = typeof midi.timeDivision === 'number' ? midi.timeDivision : 480;
+
+    for (const track of midi.track) {
+        let absTick = 0;
+        for (const ev of track.event) {
+            absTick += ev.deltaTime || 0;
+            const data = ev.data;
+            if (ev.type === 9 && data && data[1] > 0) {
+                ongoing[data[0]] = { start: absTick, vel: data[1] };
+            } else if (ev.type === 8 || (ev.type === 9 && data && data[1] === 0)) {
+                if (ongoing[data[0]]) {
+                    const { start, vel } = ongoing[data[0]];
+                    delete ongoing[data[0]];
+                    notes.push({ note: data[0], start, end: absTick, velocity: vel });
+                }
+            }
+        }
+    }
+    // 未关闭的音符
+    const lastTick = notes.length > 0 ? Math.max(...notes.map(n => n.end)) : 0;
+    for (const [note, info] of Object.entries(ongoing)) {
+        notes.push({ note: +note, start: info.start, end: lastTick + ticksPerBeat * 4, velocity: info.vel });
+    }
+    return { notes, ticksPerBeat };
+}
+
+// ===== 过滤极短音符 =====
+function filterShortNotes(notes, minDuration) {
+    if (minDuration <= 0) return notes;
+    return notes.filter(n => (n.end - n.start) >= minDuration);
+}
+
+// ===== 合并同一音高的音符 =====
+function mergeSinglePitch(notes, gapThreshold, mergeOverlap, sameVelocity) {
+    const merged = [];
+    let current = null;
+    for (const n of notes) {
+        if (current === null) {
+            current = { ...n };
+            continue;
+        }
+        const gap = n.start - current.end;
+        let canMerge = false;
+        if (mergeOverlap && gap <= 0) {
+            if (!sameVelocity || current.velocity === n.velocity) canMerge = true;
+        } else if (gap > 0 && gap <= gapThreshold) {
+            if (!sameVelocity || current.velocity === n.velocity) canMerge = true;
+        }
+        if (canMerge) {
+            current.end = Math.max(current.end, n.end);
+        } else {
+            merged.push(current);
+            current = { ...n };
+        }
+    }
+    if (current) merged.push(current);
+    return merged;
+}
+
+function connectNotes(notes, gapThreshold, mergeOverlap, sameVelocity) {
+    const byPitch = {};
+    for (const n of notes) {
+        if (!byPitch[n.note]) byPitch[n.note] = [];
+        byPitch[n.note].push(n);
+    }
+    for (const p in byPitch) {
+        byPitch[p].sort((a, b) => a.start - b.start || a.end - b.end);
+    }
+    const result = [];
+    for (const pitch of Object.keys(byPitch).map(Number).sort((a,b) => a-b)) {
+        result.push(...mergeSinglePitch(byPitch[pitch], gapThreshold, mergeOverlap, sameVelocity));
+    }
+    return result;
+}
+
+// ===== MIDI 二进制写入 =====
+function writeVarLen(value) {
+    const bytes = [];
+    do {
+        let b = value & 0x7F;
+        value >>= 7;
+        if (bytes.length > 0) b |= 0x80;
+        bytes.unshift(b);
+    } while (value > 0);
+    return bytes;
+}
+
+function notesToMidiBytes(notes, ticksPerBeat, tempo) {
+    // 排序: 按时间, note_off 先于 note_on 在同一 tick
+    const events = [];
+    for (const n of notes) {
+        events.push({ tick: n.start, type: 'note_on', note: n.note, vel: n.velocity });
+        events.push({ tick: n.end, type: 'note_off', note: n.note, vel: 0 });
+    }
+    events.sort((a, b) => a.tick - b.tick || (a.type === 'note_off' ? -1 : 1) - (b.type === 'note_off' ? -1 : 1));
+
+    // 构建轨道数据
+    const trackData = [];
+    let absTick = 0;
+
+    // Set tempo
+    const tempoBytes = [
+        0x00, 0xFF, 0x51, 0x03,
+        (tempo >> 16) & 0xFF, (tempo >> 8) & 0xFF, tempo & 0xFF
+    ];
+    trackData.push(...tempoBytes);
+
+    // Time signature
+    trackData.push(0x00, 0xFF, 0x58, 0x04, 0x04, 0x02, 0x18, 0x08);
+
+    // Note events
+    for (const ev of events) {
+        const delta = ev.tick - absTick;
+        absTick = ev.tick;
+        trackData.push(...writeVarLen(delta));
+        if (ev.type === 'note_on') {
+            trackData.push(0x90, ev.note, ev.vel);
+        } else {
+            trackData.push(0x80, ev.note, 0);
+        }
+    }
+
+    // End of track
+    trackData.push(0x00, 0xFF, 0x2F, 0x00);
+
+    // MThd header
+    const header = new Uint8Array(14);
+    const dv = new DataView(header.buffer);
+    dv.setUint32(0, 0x4D546864);  // MThd
+    dv.setUint32(4, 6);            // chunk length
+    dv.setUint16(8, 0);            // format 0
+    dv.setUint16(10, 1);           // 1 track
+    dv.setUint16(12, ticksPerBeat);
+
+    // MTrk chunk
+    const trackBytes = new Uint8Array(trackData.length);
+    for (let i = 0; i < trackData.length; i++) trackBytes[i] = trackData[i];
+
+    const trackChunk = new Uint8Array(8 + trackBytes.length);
+    const dv2 = new DataView(trackChunk.buffer);
+    dv2.setUint32(0, 0x4D54726B);  // MTrk
+    dv2.setUint32(4, trackBytes.length);
+    trackChunk.set(trackBytes, 8);
+
+    // Combine
+    const result = new Uint8Array(header.length + trackChunk.length);
+    result.set(header, 0);
+    result.set(trackChunk, header.length);
+    return result;
+}
+
+// ===== DOM =====
+const fileInput = document.getElementById('fileInput');
+const uploadArea = document.getElementById('uploadArea');
+const fileInfo = document.getElementById('fileInfo');
+const resultSection = document.getElementById('resultSection');
+const infoGrid = document.getElementById('infoGrid');
+const detailList = document.getElementById('detailList');
+const btnProcess = document.getElementById('btnProcess');
+const btnDownload = document.getElementById('btnDownload');
+const gapInput = document.getElementById('gapThreshold');
+const overlapCheck = document.getElementById('mergeOverlap');
+const anyVelCheck = document.getElementById('anyVelocity');
+const filterCheck = document.getElementById('enableFilter');
+const minDurInput = document.getElementById('minDuration');
+
+let currentMidi = null;
+let currentProcessed = null;
+let currentTicks = 480;
+let currentTempo = 500000;
+let currentFileName = '';
+
+// Filter toggle
+filterCheck.addEventListener('change', () => {
+    minDurInput.disabled = !filterCheck.checked;
+});
+
+// File upload
+fileInput.addEventListener('change', e => {
+    if (e.target.files.length) handleFile(e.target.files[0]);
+});
+uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('dragover'); });
+uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+uploadArea.addEventListener('drop', e => {
+    e.preventDefault(); uploadArea.classList.remove('dragover');
+    if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+
+function handleFile(file) {
+    if (!file.name.match(/\.midi?$/i)) {
+        showToast('请选择 .mid 或 .midi 文件');
+        return;
+    }
+    currentFileName = file.name.replace(/\.midi?$/i, '');
+    const size = file.size < 1024 ? file.size + ' B'
+        : file.size < 1048576 ? (file.size/1024).toFixed(1)+' KB'
+        : (file.size/1048576).toFixed(1)+' MB';
+    fileInfo.style.display = 'block';
+    fileInfo.textContent = '🎵 ' + file.name + ' (' + size + ')';
+    btnProcess.disabled = false;
+    resultSection.style.display = 'none';
+
+    const reader = new FileReader();
+    reader.onload = e => {
+        currentMidi = MIDIParser.parse(new Uint8Array(e.target.result));
+    };
+    reader.readAsArrayBuffer(file);
+}
+
+// Process
+btnProcess.addEventListener('click', () => {
+    if (!currentMidi) { showToast('请先选择 MIDI 文件'); return; }
+
+    const gap = parseInt(gapInput.value) || 0;
+    const mergeOverlap = overlapCheck.checked;
+    const anyVel = anyVelCheck.checked;
+    const filter = filterCheck.checked;
+    const minDur = filter ? (parseInt(minDurInput.value) || 5) : 0;
+
+    // Get tempo
+    let tempo = 500000;
+    for (const track of currentMidi.track) {
+        for (const ev of track.event) {
+            if (ev.type === 255 && ev.metaType === 0x51 && ev.data) {
+                tempo = ev.data;
+                break;
+            }
+        }
+    }
+    currentTempo = tempo;
+
+    // Extract
+    const { notes: rawNotes, ticksPerBeat } = extractNotes(currentMidi);
+    currentTicks = ticksPerBeat;
+
+    if (rawNotes.length === 0) {
+        showToast('未找到任何音符事件');
+        return;
+    }
+
+    let notes = rawNotes;
+    let filteredOut = 0;
+
+    // Filter shorts
+    if (filter && minDur > 0) {
+        const before = notes.length;
+        notes = filterShortNotes(notes, minDur);
+        filteredOut = before - notes.length;
+        if (notes.length === 0) {
+            showToast('过滤后没有剩余音符');
+            return;
+        }
+    }
+
+    // Connect
+    const connected = connectNotes(notes, gap, mergeOverlap, !anyVel);
+
+    currentProcessed = connected;
+
+    // Stats
+    const pitchSet = new Set(notes.map(n => n.note));
+    const pitches = [...pitchSet].sort((a,b)=>a-b);
+    const minPitch = Math.min(...pitches);
+    const maxPitch = Math.max(...pitches);
+    const beforeDur = notes.reduce((s, n) => s + (n.end - n.start), 0);
+    const afterDur = connected.reduce((s, n) => s + (n.end - n.start), 0);
+    const mergedCount = notes.length - connected.length;
+    const reduction = notes.length > 0 ? (mergedCount / notes.length * 100).toFixed(1) : 0;
+
+    const totalSec = ((afterDur / ticksPerBeat) * (tempo / 1000000)).toFixed(1);
+
+    infoGrid.innerHTML = `
+        <span class="label">音符数</span><span class="value">${notes.length} → ${connected.length} (合并 ${mergedCount}, -${reduction}%)</span>
+        <span class="label">音高范围</span><span class="value">${noteName(minPitch)}(${minPitch}) ~ ${noteName(maxPitch)}(${maxPitch})</span>
+        <span class="label">总时长</span><span class="value">约 ${totalSec} 秒 (${afterDur} ticks)</span>
+        <span class="label">Ticks/拍</span><span class="value">${ticksPerBeat}</span>
+        ${filteredOut > 0 ? `<span class="label">过滤杂音</span><span class="value">删除 ${filteredOut} 个</span>` : ''}
+    `;
+
+    // Detail
+    const byPitch = {};
+    for (const n of notes) {
+        if (!byPitch[n.note]) byPitch[n.note] = [];
+        byPitch[n.note].push(n);
+    }
+    const afterByPitch = {};
+    for (const n of connected) {
+        if (!afterByPitch[n.note]) afterByPitch[n.note] = [];
+        afterByPitch[n.note].push(n);
+    }
+
+    let detailHtml = '';
+    for (const pitch of pitches) {
+        const bc = byPitch[pitch].length;
+        const ac = afterByPitch[pitch] ? afterByPitch[pitch].length : 0;
+        if (bc !== ac) {
+            detailHtml += `${noteName(pitch)} (MIDI ${pitch}): ${bc} → ${ac} (合并 ${bc-ac})\n`;
+        }
+    }
+    if (!detailHtml) detailHtml = '(无首尾相接或重叠的同音音符)';
+    detailList.textContent = '各音高合并详情:\n' + detailHtml;
+
+    resultSection.style.display = 'block';
+    btnDownload.disabled = false;
+    showToast(`处理完成! ${notes.length} → ${connected.length} 个音符`);
+});
+
+// Download
+btnDownload.addEventListener('click', () => {
+    if (!currentProcessed || currentProcessed.length === 0) return;
+    const bytes = notesToMidiBytes(currentProcessed, currentTicks, currentTempo);
+    const blob = new Blob([bytes], { type: 'audio/midi' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = currentFileName + '_connected.mid';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    showToast('✅ 已下载处理后的 MIDI 文件');
+});
+</script>
+</body>
+</html>
